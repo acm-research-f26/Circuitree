@@ -4,7 +4,7 @@ from collections import Counter
 
 import networkx as nx
 
-GATE_RE = re.compile(r"^(\S+)\s*=\s*(\w+)\s*\((.*)\S)")
+GATE_RE = re.compile(r"^(\S+)\s*=\s*(\w+)\s*\((.*)\)$")
 
 IO_RE = re.compile(r"^(INPUT|OUTPUT)\s*\(\s*(\S+?)\s*\)$", re.IGNORECASE)
 def load_bench(path):
@@ -44,7 +44,7 @@ def main():
     print(f"Nodes: {g.number_of_nodes()}")
     print(f"Edges: {g.number_of_edges()}")
     for gate_type, count in sorted(gate_counts.items()):
-        print(F"{gate_type} : {count}")
+        print(f"{gate_type} : {count}")
 
 if __name__ == "__main__":
     main()
