@@ -1,0 +1,5 @@
+#Circuitree
+
+#Basic Architecture:
+  - GED YOLO model that is used to develop implified graphs and rids for the project.
+
