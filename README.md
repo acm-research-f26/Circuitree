@@ -20,6 +20,6 @@ circuits = load_folder("aig")
 evaluate(structural_rank, circuits)
 ```
 
-Built with help from Claude (AI use was OK'd for the project).
+
 
 Results so far (11 ISCAS'85 circuits + temp variants), top-1 match: histogram ~80%, WL ~93%, structural ~94%.
