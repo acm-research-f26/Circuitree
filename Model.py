@@ -13,7 +13,7 @@ from BaselineP import load_bench
 # =====================================================================
 def is_aig(G_raw) -> bool:
     allowed_gates = {"INPUT", "AND"}
-    for _, node_data in G_raw.nodes(data=True):
+    for _, node_data in G_raw.nodes(data = True):
         if node_data.get("gate", "INPUT") not in allowed_gates:
             return False
     return True
@@ -26,7 +26,6 @@ def compute_node_levels(G_raw) -> dict:
     return node_levels
 
 def bench_to_pyg(G_raw):
-    #Converts a NetworkX graph G_raw into a PyTorch Geometric Data object.
     if not is_aig(G_raw):
         print("[REJECTED] Non-AIG graph detected.")
         return None
@@ -50,22 +49,22 @@ def bench_to_pyg(G_raw):
         x.append(type_vec + [float(fan_in), float(fan_out), float(level)])
 
     edge_src, edge_dst, edge_type = [], [], []
-    for u, v, edge_data in G_raw.edges(data=True):
+    for u, v, edge_data in G_raw.edges(data = True):
         edge_src.append(node_to_idx[u])
         edge_dst.append(node_to_idx[v])
         edge_type.append(1 if edge_data.get("inverted", False) else 0)
 
     return Data(
         x=torch.tensor(x, dtype=torch.float),
-        edge_index=torch.tensor([edge_src, edge_dst], dtype=torch.long),
-        edge_type=torch.tensor(edge_type, dtype=torch.long)
+        edge_index=torch.tensor([edge_src, edge_dst], dtype = torch.long),
+        edge_type=torch.tensor(edge_type, dtype = torch.long)
     )
 
 # =====================================================================
 # CHUNKS 2, 3 & 4: GNN MODEL ARCHITECTURE & POOLING
 # =====================================================================
 class CircuitGNN(nn.Module):
-    def __init__(self, in_channels=8, hidden_channels=32, out_channels=64, num_layers=3):
+    def __init__(self, in_channels = 8, hidden_channels = 32, out_channels = 64, num_layers = 3):
         super().__init__()
         self.convs = nn.ModuleList()
         self.convs.append(RGCNConv(in_channels, hidden_channels, num_relations=2))
@@ -73,19 +72,18 @@ class CircuitGNN(nn.Module):
             self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations=2))
         self.convs.append(RGCNConv(hidden_channels, out_channels, num_relations=2))
 
-    def forward(self, x, edge_index, edge_type, batch=None):
+    def forward(self, x, edge_index, edge_type, batch = None):
         if batch is None:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+            batch = torch.zeros(x.size(0), dtype=torch.long, device = x.device)
 
         h = x
         for conv in self.convs[:-1]:
             h = F.relu(conv(h, edge_index, edge_type))
         h_node = self.convs[-1](h, edge_index, edge_type)
 
-        # Mean ⊕ Max Pooling (Chunk 4)
         mean_pool = global_mean_pool(h_node, batch)
         max_pool = global_max_pool(h_node, batch)
-        return torch.cat([mean_pool, max_pool], dim=-1) # Returns [Batch_Size, 128]
+        return torch.cat([mean_pool, max_pool], dim=-1) 
 
 # =====================================================================
 # CHUNK 5: CONTRASTIVE LOSS (InfoNCE)
@@ -112,7 +110,7 @@ class CircuitRetriever:
         self.db_vectors = None
 
     def add_to_index(self, names, embeddings):
-        norm_emb = F.normalize(embeddings, p=2, dim=-1).detach().cpu()
+        norm_emb = F.normalize(embeddings, p = 2, dim = -1).detach().cpu()
         if self.db_vectors is None:
             self.db_vectors = norm_emb
         else:
@@ -122,7 +120,7 @@ class CircuitRetriever:
     def search(self, query_vec, top_k=3):
         if query_vec.dim() == 1:
             query_vec = query_vec.unsqueeze(0)
-        q_norm = F.normalize(query_vec.detach().cpu(), p=2, dim=-1)
+        q_norm = F.normalize(query_vec.detach().cpu(), p = 2, dim = -1)
         sims = torch.matmul(q_norm, self.db_vectors.T).squeeze(0)
         top_scores, top_indices = torch.topk(sims, k=min(top_k, len(self.names)))
         return [(self.names[idx.item()], top_scores[i].item()) for i, idx in enumerate(top_indices)]
