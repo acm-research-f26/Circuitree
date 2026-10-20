@@ -9,7 +9,7 @@ from torch_geometric.nn import RGCNConv, global_mean_pool, global_max_pool
 from BaselineP import load_bench
 
 # =====================================================================
-# CHUNK 1: DATA CONVERSION (bench_to_pyg)
+# Data Conversion (bench_to_pyg)
 # =====================================================================
 def is_aig(G_raw) -> bool:
     allowed_gates = {"INPUT", "AND"}
@@ -55,22 +55,23 @@ def bench_to_pyg(G_raw):
         edge_type.append(1 if edge_data.get("inverted", False) else 0)
 
     return Data(
-        x=torch.tensor(x, dtype=torch.float),
-        edge_index=torch.tensor([edge_src, edge_dst], dtype = torch.long),
-        edge_type=torch.tensor(edge_type, dtype = torch.long)
+        x = torch.tensor(x, dtype = torch.float),
+        edge_index = torch.tensor([edge_src, edge_dst], dtype = torch.long),
+        edge_type = torch.tensor(edge_type, dtype = torch.long)
     )
 
 # =====================================================================
-# CHUNKS 2, 3 & 4: GNN MODEL ARCHITECTURE & POOLING
+# GNN Model
 # =====================================================================
 class CircuitGNN(nn.Module):
     def __init__(self, in_channels = 8, hidden_channels = 32, out_channels = 64, num_layers = 3):
         super().__init__()
         self.convs = nn.ModuleList()
-        self.convs.append(RGCNConv(in_channels, hidden_channels, num_relations=2))
+        numrel = 2
+        self.convs.append(RGCNConv(in_channels, hidden_channels, num_relations = numrel))
         for _ in range(num_layers - 2):
-            self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations=2))
-        self.convs.append(RGCNConv(hidden_channels, out_channels, num_relations=2))
+            self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations = numrel))
+        self.convs.append(RGCNConv(hidden_channels, out_channels, num_relations = numrel))
 
     def forward(self, x, edge_index, edge_type, batch = None):
         if batch is None:
@@ -86,23 +87,23 @@ class CircuitGNN(nn.Module):
         return torch.cat([mean_pool, max_pool], dim=-1) 
 
 # =====================================================================
-# CHUNK 5: CONTRASTIVE LOSS (InfoNCE)
+# Loss Factor (InfoNCE)
 # =====================================================================
 class InfoNCELoss(nn.Module):
-    def __init__(self, temperature=0.07):
+    def __init__(self, temperature = 0.07):
         super().__init__()
         self.temperature = temperature
         self.ce = nn.CrossEntropyLoss()
 
     def forward(self, z_a, z_p):
-        z_a = F.normalize(z_a, p=2, dim=1)
-        z_p = F.normalize(z_p, p=2, dim=1)
+        z_a = F.normalize(z_a, p = 2, dim = 1)
+        z_p = F.normalize(z_p, p = 2, dim = 1)
         sim_matrix = torch.matmul(z_a, z_p.T) / self.temperature
         labels = torch.arange(z_a.size(0), device=z_a.device)
         return (self.ce(sim_matrix, labels) + self.ce(sim_matrix.T, labels)) / 2.0
 
 # =====================================================================
-# CHUNK 6: RETRIEVAL ENGINE
+# Rretrival Engine
 # =====================================================================
 class CircuitRetriever:
     def __init__(self):
@@ -114,10 +115,10 @@ class CircuitRetriever:
         if self.db_vectors is None:
             self.db_vectors = norm_emb
         else:
-            self.db_vectors = torch.cat([self.db_vectors, norm_emb], dim=0)
+            self.db_vectors = torch.cat([self.db_vectors, norm_emb], dim = 0)
         self.names.extend(names)
 
-    def search(self, query_vec, top_k=3):
+    def search(self, query_vec, top_k = 3):
         if query_vec.dim() == 1:
             query_vec = query_vec.unsqueeze(0)
         q_norm = F.normalize(query_vec.detach().cpu(), p = 2, dim = -1)
@@ -127,7 +128,7 @@ class CircuitRetriever:
 # ============================================================================================
 # Execution of the script
 # ============================================================================================
-def embed_folder(model, folder_path, device="cpu"):
+def embed_folder(model, folder_path, device = "cpu"):
     model.eval()
     embeddings = {}
 
@@ -149,10 +150,10 @@ def embed_folder(model, folder_path, device="cpu"):
 def compute_all_distances(embeddings, output_path):
     names = list(embeddings.keys())
     vecs = torch.stack([embeddings[n] for n in names])
-    vecs_norm = F.normalize(vecs, p=2, dim=1)
+    vecs_norm = F.normalize(vecs, p = 2, dim = 1)
     sim_matrix = torch.matmul(vecs_norm, vecs_norm.T)
 
-    with open(output_path, "w", newline="") as f:
+    with open(output_path, "w", newline = "") as f:
         writer = csv.writer(f)
         writer.writerow(["circuit_a", "circuit_b", "cosine_similarity"])
         for i, name_a in enumerate(names):
@@ -164,9 +165,9 @@ def compute_all_distances(embeddings, output_path):
 
 if __name__ == "__main__":
     G_test = nx.DiGraph()
-    G_test.add_node("a", gate="INPUT")
-    G_test.add_node("b", gate="INPUT")
-    G_test.add_node("n1", gate="AND")
+    G_test.add_node("a", gate = "INPUT")
+    G_test.add_node("b", gate = "INPUT")
+    G_test.add_node("n1", gate = "AND")
     G_test.add_edge("a", "n1", inverted=False)
     G_test.add_edge("b", "n1", inverted=True)
 
