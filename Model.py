@@ -76,12 +76,10 @@ class CircuitGNN(nn.Module):
     def forward(self, x, edge_index, edge_type, batch = None):
         if batch is None:
             batch = torch.zeros(x.size(0), dtype=torch.long, device = x.device)
-
         h = x
         for conv in self.convs[:-1]:
             h = F.relu(conv(h, edge_index, edge_type))
         h_node = self.convs[-1](h, edge_index, edge_type)
-
         mean_pool = global_mean_pool(h_node, batch)
         max_pool = global_max_pool(h_node, batch)
         return torch.cat([mean_pool, max_pool], dim=-1) 
@@ -103,7 +101,7 @@ class InfoNCELoss(nn.Module):
         return (self.ce(sim_matrix, labels) + self.ce(sim_matrix.T, labels)) / 2.0
 
 # =====================================================================
-# Rretrival Engine
+# Retrival Engine
 # =====================================================================
 class CircuitRetriever:
     def __init__(self):
@@ -125,6 +123,9 @@ class CircuitRetriever:
         sims = torch.matmul(q_norm, self.db_vectors.T).squeeze(0)
         top_scores, top_indices = torch.topk(sims, k=min(top_k, len(self.names)))
         return [(self.names[idx.item()], top_scores[i].item()) for i, idx in enumerate(top_indices)]
+
+
+
 # ============================================================================================
 # Execution of the script
 # ============================================================================================
