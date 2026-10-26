@@ -183,8 +183,8 @@ def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu")
     for epoch in range(epochs):
         total_loss = 0.0
         for path_a_list, path_p_list in dataloader:
-            batch_a = load_and_convert_batch(path_a_list, device)
-            batch_p = load_and_convert_batch(path_p_list, device)
+            batch_a = convert_batch(path_a_list, device)
+            batch_p = convert_batch(path_p_list, device)
             
             optimizer.zero_grad()
             z_a = model(batch_a.x, batch_a.edge_index, batch_a.edge_type, batch_a.batch)
@@ -200,6 +200,8 @@ def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu")
 # ============================================================================================
 # Execution of the script
 # ============================================================================================
+
+
 def embed_folder(model, folder_path, device = "cpu"):
     model.eval()
     embeddings = {}
@@ -235,16 +237,63 @@ def compute_all_distances(embeddings, output_path):
 
     print(f"Wrote {len(names)*(len(names)-1)//2} pairwise comparisons to {output_path}")
 
-if __name__ == "__main__":
-    G_test = nx.DiGraph()
-    G_test.add_node("a", gate = "INPUT")
-    G_test.add_node("b", gate = "INPUT")
-    G_test.add_node("n1", gate = "AND")
-    G_test.add_edge("a", "n1", inverted=False)
-    G_test.add_edge("b", "n1", inverted=True)
+# if __name__ == "__main__":
+#     G_test = nx.DiGraph()
+#     G_test.add_node("a", gate = "INPUT")
+#     G_test.add_node("b", gate = "INPUT")
+#     G_test.add_node("n1", gate = "AND")
+#     G_test.add_edge("a", "n1", inverted=False)
+#     G_test.add_edge("b", "n1", inverted=True)
 
-    data = bench_to_pyg(G_test)
-    print(data.x.shape, data.edge_index.shape, data.edge_type.shape)
-    model = CircuitGNN()
-    embeddings = embed_folder(model, "Circuits_folder")
-    compute_all_distances(embeddings, "similarity_results.csv")
+#     data = bench_to_pyg(G_test)
+#     print(data.x.shape, data.edge_index.shape, data.edge_type.shape)
+#     model = CircuitGNN()
+#     embeddings = embed_folder(model, "Circuits_folder")
+#     compute_all_distances(embeddings, "similarity_results.csv")
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    
+    # Initialize the GNN Model
+    model = CircuitGNN(in_channels=8, hidden_channels=32, out_channels=64, num_layers=3).to(device)
+    
+    # -----------------------------------------------------------------
+    # Training Pipeline (Synthetic First, Real Second)
+    # -----------------------------------------------------------------
+    print("\n--- Phase 1: Training on Synthetic Circuits ---")
+    train_circuit_model(model, csv_path="samples.csv", epochs=5, batch_size=16, device=device)
+    
+    print("\n--- Phase 2: Training on Real Circuits ---")
+    # Uncomment and update path if you have a separate real circuits dataset CSV:
+    # train_circuit_model(model, csv_path="real_samples.csv", epochs=5, batch_size=16, device=device)
+    
+    # -----------------------------------------------------------------
+    # Embedding Folder & Pairwise Distance Computation
+    # -----------------------------------------------------------------
+    print("\n--- Phase 3: Embedding Folders & Computing Pairwise Distances ---")
+    embeddings = embed_folder(model, "Circuits_folder", device=device)
+    
+    if embeddings:
+        compute_all_distances(embeddings, "similarity_results.csv")
+        
+        # Populate the CircuitRetriever index with trained embeddings
+        retriever = CircuitRetriever()
+        names = list(embeddings.keys())
+        vecs = torch.stack([embeddings[n] for n in names])
+        retriever.add_to_index(names, vecs)
+        
+        # -------------------------------------------------------------
+        # CEC Post-Verification (Run on top-k rankings)
+        # -------------------------------------------------------------
+        print("\n--- Phase 4: Running CEC Post-Verification on Top-K Rankings ---")
+        query_name = names[0]
+        query_vec = embeddings[query_name]
+        
+        # Get top-3 retrieved candidates using the retriever
+        top_candidates = retriever.search(query_vec, top_k=3)
+        print(f"Top-3 raw matches for query '{query_name}': {top_candidates}")
+        
+        # Run CEC verification on the ranked candidates
+        verified_results = cec_checking(query_name, top_candidates)
+        print(f"CEC Verified Matches: {verified_results}")
