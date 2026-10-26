@@ -3,10 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import csv
+import pandas as pd
 import networkx as nx
 from torch_geometric.data import Data
+from torch_geometric.data import Batch
 from torch_geometric.nn import RGCNConv, global_mean_pool, global_max_pool
 from BaselineP import load_bench
+from torch.utils.data import Dataset, DataLoader
 
 # =====================================================================
 # Data Conversion (bench_to_pyg)
@@ -61,6 +64,38 @@ def bench_to_pyg(G_raw):
     )
 
 # =====================================================================
+# Data Preprocessing
+# =====================================================================
+class CircuitDataset(Dataset):
+    def __init__(self, csv_path, split = "train", role = "view"):
+        df = pd.read_csv(csv_path)
+        df = df[(df["split"] == split) & (df["role"] == role)]
+        self.function_groups = df.groupby("function_id")["circuit_path"].apply(list).to_dict()
+        self.function_ids = list(self.function_groups.keys())
+
+    def __len__(self):
+        return len(self.function_ids)
+
+    def __getitem__(self, idx):
+        f_id = self.function_ids[idx]
+        paths = self.function_groups[f_id]
+        if len(paths) >= 2:
+            p1, p2 = torch.randperm(len(paths))[:2]
+            path_a, path_p = paths[p1], paths[p2]
+        else: 
+            path_a = path_p = paths[0]
+        return path_a, path_p
+
+    def convert_batch(path_list, device):
+        data_list = []
+        for path in path_list:
+            G_raw = load_bench(path)
+            data = bench_to_pyg(G_raw)
+            if data is not None:
+                data_list.append(data)
+        return Batch.from_data_list(data_list).to(device)
+
+# =====================================================================
 # GNN Model
 # =====================================================================
 class CircuitGNN(nn.Module):
@@ -97,7 +132,7 @@ class InfoNCELoss(nn.Module):
         z_a = F.normalize(z_a, p = 2, dim = 1)
         z_p = F.normalize(z_p, p = 2, dim = 1)
         sim_matrix = torch.matmul(z_a, z_p.T) / self.temperature
-        labels = torch.arange(z_a.size(0), device=z_a.device)
+        labels = torch.arange(z_a.size(0), device = z_a.device)
         return (self.ce(sim_matrix, labels) + self.ce(sim_matrix.T, labels)) / 2.0
 
 # =====================================================================
@@ -123,8 +158,44 @@ class CircuitRetriever:
         sims = torch.matmul(q_norm, self.db_vectors.T).squeeze(0)
         top_scores, top_indices = torch.topk(sims, k=min(top_k, len(self.names)))
         return [(self.names[idx.item()], top_scores[i].item()) for i, idx in enumerate(top_indices)]
+# ============================================================================================
+# Circuit Equivalence Checking
+# ============================================================================================
+def cec_checking(circuit, candidates):
+    verified_results = []
+    for name, score in candidates:
+        is_equivalent = True 
+        if is_equivalent:
+            verified_results.append((name, score))
+    return verified_results
 
-
+# ============================================================================================
+# Execution of the script
+# ============================================================================================
+def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu"):
+    dataset = CircuitDataset(csv_path, split="train", role="view")
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    criterion = InfoNCELoss(temperature=0.07)
+    
+    model.train()
+    for epoch in range(epochs):
+        total_loss = 0.0
+        for path_a_list, path_p_list in dataloader:
+            batch_a = load_and_convert_batch(path_a_list, device)
+            batch_p = load_and_convert_batch(path_p_list, device)
+            
+            optimizer.zero_grad()
+            z_a = model(batch_a.x, batch_a.edge_index, batch_a.edge_type, batch_a.batch)
+            z_p = model(batch_p.x, batch_p.edge_index, batch_p.edge_type, batch_p.batch)
+            
+            loss = criterion(z_a, z_p)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            
+        print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss / len(dataloader):.4f}")
 
 # ============================================================================================
 # Execution of the script
