@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import csv
 import pandas as pd
 import networkx as nx
+import subprocess
 from torch_geometric.data import Data
 from torch_geometric.data import Batch
 from torch_geometric.nn import RGCNConv, global_mean_pool, global_max_pool
@@ -86,15 +87,6 @@ class CircuitDataset(Dataset):
             path_a = path_p = paths[0]
         return path_a, path_p
 
-    def convert_batch(path_list, device):
-        data_list = []
-        for path in path_list:
-            G_raw = load_bench(path)
-            data = bench_to_pyg(G_raw)
-            if data is not None:
-                data_list.append(data)
-        return Batch.from_data_list(data_list).to(device)
-
 # =====================================================================
 # GNN Model
 # =====================================================================
@@ -161,14 +153,46 @@ class CircuitRetriever:
 # ============================================================================================
 # Circuit Equivalence Checking
 # ============================================================================================
-def cec_checking(circuit, candidates):
+def run_abc_cec(file1, file2) -> bool:
+    try:
+        cmd = f"read {file1}; read {file2}; cec"
+        result = subprocess.run(
+            ["abc", "-c", cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10
+        )
+        output = result.stdout + result.stderr
+        if "Networks are equivalent" in output:
+            return True
+        return False
+    except FileNotFoundError:
+        print("[Warning] 'abc' binary not found in system PATH. Failing closed (returning False).")
+        return False  # <-- CHANGED FROM True TO False
+    except Exception as e:
+        print(f"[Error] ABC CEC failed: {e}")
+        return False
+
+def cec_checking(query_path, candidates, folder_path="Circuits_folder"):
     verified_results = []
     for name, score in candidates:
-        is_equivalent = True 
-        if is_equivalent:
+        cand_path = os.path.join(folder_path, name)
+        if run_abc_cec(query_path, cand_path):
             verified_results.append((name, score))
     return verified_results
 
+def convert_batch(path_list, device):
+    data_list = []
+    for path in path_list:
+        G_raw = load_bench(path)
+        if G_raw is not None:  # <-- Added check
+            data = bench_to_pyg(G_raw)
+            if data is not None:
+                data_list.append(data)
+    if not data_list:      # <-- Added check
+        return None
+    return Batch.from_data_list(data_list).to(device)
 # ============================================================================================
 # Execution of the script
 # ============================================================================================
@@ -182,9 +206,13 @@ def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu")
     model.train()
     for epoch in range(epochs):
         total_loss = 0.0
+        valid_batches = 0  # <-- Track valid batches
         for path_a_list, path_p_list in dataloader:
             batch_a = convert_batch(path_a_list, device)
             batch_p = convert_batch(path_p_list, device)
+            
+            if batch_a is None or batch_p is None:  # <-- Skip bad batches
+                continue
             
             optimizer.zero_grad()
             z_a = model(batch_a.x, batch_a.edge_index, batch_a.edge_type, batch_a.batch)
@@ -194,8 +222,13 @@ def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu")
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            valid_batches += 1
             
-        print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss / len(dataloader):.4f}")
+        if valid_batches == 0:
+            print(f"[Warning] Epoch {epoch+1}/{epochs}: 0 valid batches processed! Check if samples.csv paths point to valid AIG (.bench) files.")
+        else:
+            avg_loss = total_loss / valid_batches
+            print(f"Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.4f}")
 
 # ============================================================================================
 # Execution of the script
@@ -237,20 +270,6 @@ def compute_all_distances(embeddings, output_path):
 
     print(f"Wrote {len(names)*(len(names)-1)//2} pairwise comparisons to {output_path}")
 
-# if __name__ == "__main__":
-#     G_test = nx.DiGraph()
-#     G_test.add_node("a", gate = "INPUT")
-#     G_test.add_node("b", gate = "INPUT")
-#     G_test.add_node("n1", gate = "AND")
-#     G_test.add_edge("a", "n1", inverted=False)
-#     G_test.add_edge("b", "n1", inverted=True)
-
-#     data = bench_to_pyg(G_test)
-#     print(data.x.shape, data.edge_index.shape, data.edge_type.shape)
-#     model = CircuitGNN()
-#     embeddings = embed_folder(model, "Circuits_folder")
-#     compute_all_distances(embeddings, "similarity_results.csv")
-
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -286,14 +305,15 @@ if __name__ == "__main__":
         # -------------------------------------------------------------
         # CEC Post-Verification (Run on top-k rankings)
         # -------------------------------------------------------------
-        print("\n--- Phase 4: Running CEC Post-Verification on Top-K Rankings ---")
+        print("\n--- Phase 3: Running CEC Post-Verification on Top-K Rankings ---")
         query_name = names[0]
+        query_path = os.path.join("Circuits_folder", query_name)  # <-- Added query_path
         query_vec = embeddings[query_name]
         
         # Get top-3 retrieved candidates using the retriever
         top_candidates = retriever.search(query_vec, top_k=3)
         print(f"Top-3 raw matches for query '{query_name}': {top_candidates}")
         
-        # Run CEC verification on the ranked candidates
-        verified_results = cec_checking(query_name, top_candidates)
+        # Run real CEC verification on the ranked candidates
+        verified_results = cec_checking(query_path, top_candidates, folder_path="Circuits_folder") # <-- Updated arguments
         print(f"CEC Verified Matches: {verified_results}")

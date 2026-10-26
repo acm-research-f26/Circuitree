@@ -1,0 +1,12 @@
+circuit_path,function_id,split,role
+Circuits_folder/c3540.bench,c3540.bench,train,view
+Circuits_folder/c880.bench,c880.bench,train,view
+Circuits_folder/c432.bench,c432.bench,train,view
+Circuits_folder/c7552.bench,c7552.bench,train,view
+Circuits_folder/c5315.bench,c5315.bench,train,view
+Circuits_folder/c17.bench,c17.bench,train,view
+Circuits_folder/c6288.bench,c6288.bench,train,view
+Circuits_folder/c499.bench,c499.bench,train,view
+Circuits_folder/c1355.bench,c1355.bench,train,view
+Circuits_folder/c1908.bench,c1908.bench,train,view
+Circuits_folder/c2670.bench,c2670.bench,train,view
