@@ -38,7 +38,7 @@ def load_bench(path):
 
 def gate_vector(graph):
     gate_counts = Counter(
-        d["gate"] for _, d in graph.nodes(data=True)
+        d["gate"] for _, d in graph.nodes(data = True)
         if d.get("gate") not in (None, "INPUT")
     )
     known = {gt: gate_counts.get(gt, 0) for gt in GATE_TYPES if gt != "OTHER"}
@@ -66,7 +66,7 @@ def circuits_similarity_ranking(target_circuit, comparison_circuit):
         for name in comparison_circuit
     ]
 
-    rankings.sort(key = lambda x: x[1], reverse=True)
+    rankings.sort(key = lambda x: x[1], reverse = True)
     return rankings
 
 
@@ -110,7 +110,7 @@ def main():
         print(f"{name}: {score:.4f}")
 
     print("WL:")
-    wl_rankings = ciruits_similarity_ranking_WL("c17.bench", ["c17.bench"] + all_circuits, h=3)
+    wl_rankings = ciruits_similarity_ranking_WL("c17.bench", ["c17.bench"] + all_circuits, h = 3)
     for name, score in wl_rankings:
         print(f"{name}: {score:.4f}")
 
