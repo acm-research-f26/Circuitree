@@ -1,3 +1,23 @@
+# Archives and benchmark/data files
 circuitree_v2.zip
 *.bench
 *.npz
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments and editors
+.venv/
+.vscode/
+
+# Local data dumps, weights, logs, and evaluation outputs inside circuitree_v2
+circuitree_v2/circuitree_v2/*.csv
+circuitree_v2/circuitree_v2/*.json
+circuitree_v2/circuitree_v2/*.pt
+circuitree_v2/circuitree_v2/eval/
+circuitree_v2/circuitree_v2/pairs/
+circuitree_v2/circuitree_v2/README.md
+__pycache__/BaselineP.cpython-313.pyc
+__pycache__/Model.cpython-313.pyc
