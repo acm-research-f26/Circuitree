@@ -1,5 +1,6 @@
 import os
 import torch
+import time
 import torch.nn as nn
 import torch.nn.functional as F
 import csv
@@ -9,8 +10,12 @@ import subprocess
 from torch_geometric.data import Data
 from torch_geometric.data import Batch
 from torch_geometric.nn import RGCNConv, global_mean_pool, global_max_pool
-from BaselineP import load_bench
 from torch.utils.data import Dataset, DataLoader
+
+try: # Safety mesure to ensure that program still runs
+    from BaselineP import load_bench
+except ImportError:
+    load_bench = None
 
 # =====================================================================
 # Data Conversion (bench_to_pyg)
@@ -102,14 +107,14 @@ class CircuitGNN(nn.Module):
 
     def forward(self, x, edge_index, edge_type, batch = None):
         if batch is None:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device = x.device)
+            batch = torch.zeros(x.size(0), dtype = torch.long, device = x.device)
         h = x
         for conv in self.convs[:-1]:
             h = F.relu(conv(h, edge_index, edge_type))
         h_node = self.convs[-1](h, edge_index, edge_type)
         mean_pool = global_mean_pool(h_node, batch)
         max_pool = global_max_pool(h_node, batch)
-        return torch.cat([mean_pool, max_pool], dim=-1) 
+        return torch.cat([mean_pool, max_pool], dim = -1) 
 
 # =====================================================================
 # Loss Factor (InfoNCE)
@@ -120,12 +125,20 @@ class InfoNCELoss(nn.Module):
         self.temperature = temperature
         self.ce = nn.CrossEntropyLoss()
 
-    def forward(self, z_a, z_p):
+    def forward(self, z_a, z_p, extra_neg = None):
         z_a = F.normalize(z_a, p = 2, dim = 1)
         z_p = F.normalize(z_p, p = 2, dim = 1)
-        sim_matrix = torch.matmul(z_a, z_p.T) / self.temperature
+
+        if extra_neg is not None:
+            cols = torch.cat([z_p, F.normalize(extra_neg, p = 2, dim = 1)])
+        else: 
+            cols = z_p
+
         labels = torch.arange(z_a.size(0), device = z_a.device)
-        return (self.ce(sim_matrix, labels) + self.ce(sim_matrix.T, labels)) / 2.0
+        loss_a = self.ce(z_a @ cols.T / self.temperature, labels)
+        loss_p = self.ce(z_p @ z_a.T / self.temperature, labels)
+
+        return (loss_a + loss_p) / 2.0
 
 # =====================================================================
 # Retrival Engine
@@ -150,6 +163,7 @@ class CircuitRetriever:
         sims = torch.matmul(q_norm, self.db_vectors.T).squeeze(0)
         top_scores, top_indices = torch.topk(sims, k=min(top_k, len(self.names)))
         return [(self.names[idx.item()], top_scores[i].item()) for i, idx in enumerate(top_indices)]
+        
 # ============================================================================================
 # Circuit Equivalence Checking
 # ============================================================================================
@@ -158,10 +172,10 @@ def run_abc_cec(file1, file2) -> bool:
         cmd = f"read {file1}; read {file2}; cec"
         result = subprocess.run(
             ["abc", "-c", cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
+            stdout = subprocess.PIPE,
+            stderr = subprocess.PIPE,
+            text = True,
+            timeout = 10
         )
         output = result.stdout + result.stderr
         if "Networks are equivalent" in output:
@@ -193,15 +207,16 @@ def convert_batch(path_list, device):
     if not data_list:      # <-- Added check
         return None
     return Batch.from_data_list(data_list).to(device)
+
 # ============================================================================================
 # Execution of the script
 # ============================================================================================
-def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu"):
-    dataset = CircuitDataset(csv_path, split="train", role="view")
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+def train_circuit_model(model, csv_path, epochs = 10, batch_size = 32, device = "cpu"):
+    dataset = CircuitDataset(csv_path, split = "train", role = "view")
+    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = True)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    criterion = InfoNCELoss(temperature=0.07)
+    optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
+    criterion = InfoNCELoss(temperature = 0.07)
     
     model.train()
     for epoch in range(epochs):
@@ -233,8 +248,6 @@ def train_circuit_model(model, csv_path, epochs=10, batch_size=32, device="cpu")
 # ============================================================================================
 # Execution of the script
 # ============================================================================================
-
-
 def embed_folder(model, folder_path, device = "cpu"):
     model.eval()
     embeddings = {}
@@ -275,45 +288,44 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
     
     # Initialize the GNN Model
-    model = CircuitGNN(in_channels=8, hidden_channels=32, out_channels=64, num_layers=3).to(device)
+    model = CircuitGNN(in_channels = 8, hidden_channels = 32, out_channels = 64, num_layers = 3).to(device)
     
-    # -----------------------------------------------------------------
-    # Training Pipeline (Synthetic First, Real Second)
-    # -----------------------------------------------------------------
+    # Training Metrics
     print("\n--- Phase 1: Training on Synthetic Circuits ---")
-    train_circuit_model(model, csv_path="samples.csv", epochs=5, batch_size=16, device=device)
+    start_time = time.time()
+    train_circuit_model(model, csv_path = "samples.csv", epochs = 5, batch_size = 16, device = device)
+    train_duration = time.time() - start_time
+    print(f"[Metrics] Training completed in {train_duration:.2f} seconds.")
     
-    print("\n--- Phase 2: Training on Real Circuits ---")
-    # Uncomment and update path if you have a separate real circuits dataset CSV:
-    # train_circuit_model(model, csv_path="real_samples.csv", epochs=5, batch_size=16, device=device)
-    
-    # -----------------------------------------------------------------
-    # Embedding Folder & Pairwise Distance Computation
-    # -----------------------------------------------------------------
-    print("\n--- Phase 3: Embedding Folders & Computing Pairwise Distances ---")
-    embeddings = embed_folder(model, "Circuits_folder", device=device)
+    # --- Phase 2: Embedding Folders ---
+    print("\n--- Phase 2: Embedding Folders ---")
+    embeddings = embed_folder(model, "Circuits_folder", device = device)
     
     if embeddings:
-        compute_all_distances(embeddings, "similarity_results.csv")
-        
-        # Populate the CircuitRetriever index with trained embeddings
+        #To prevent OOM / crashes with >800 circuits, compute pairwise distances in chunks if needed, 
+        # or skip full N*N matrix generation if only searching. Here we safely use the retriever index:
         retriever = CircuitRetriever()
         names = list(embeddings.keys())
         vecs = torch.stack([embeddings[n] for n in names])
         retriever.add_to_index(names, vecs)
         
-        # -------------------------------------------------------------
-        # CEC Post-Verification (Run on top-k rankings)
-        # -------------------------------------------------------------
-        print("\n--- Phase 3: Running CEC Post-Verification on Top-K Rankings ---")
-        query_name = names[0]
-        query_path = os.path.join("Circuits_folder", query_name)  # <-- Added query_path
-        query_vec = embeddings[query_name]
-        
-        # Get top-3 retrieved candidates using the retriever
-        top_candidates = retriever.search(query_vec, top_k=3)
-        print(f"Top-3 raw matches for query '{query_name}': {top_candidates}")
-        
-        # Run real CEC verification on the ranked candidates
-        verified_results = cec_checking(query_path, top_candidates, folder_path="Circuits_folder") # <-- Updated arguments
-        print(f"CEC Verified Matches: {verified_results}")
+        # --- Phase 3: Testing with a Target Circuit & Top 20 CEC ---
+        print("\n--- Phase 3: Testing Target Circuit & Top 20 CEC Verification ---")
+        # Select target circuit (e.g., from your list of 8 test circuits or first available)
+        target_circuit = names[0] if names else None
+        if target_circuit:
+            query_path = os.path.join("Circuits_folder", target_circuit)
+            query_vec = embeddings[target_circuit]
+            
+            # Get top 20 retrieved candidates
+            top_candidates = retriever.search(query_vec, top_k = 20)
+            print(f"Top-20 raw matches for query '{target_circuit}':")
+            for rank, (cand_name, score) in enumerate(top_candidates, 1):
+                print(f"  {rank}. {cand_name} (Cosine Similarity: {score: .4f})")
+            
+            # Run CEC verification on top 20 candidates + display scores
+            print("\nRunning Berkeley ABC CEC on Top-20 Candidates...")
+            verified_results = cec_checking(query_path, top_candidates, folder_path = "Circuits_folder")
+            print(f"\n[Results] CEC Verified Equivalent Matches out of Top 20:")
+            for name, score in verified_results:
+                print(f"  - {name} | Similarity: {score: .4f} | Status: Equivalent")
