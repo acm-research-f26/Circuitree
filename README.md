@@ -1,25 +1,29 @@
-# Shireen - baselines
+# baselines on dataset v2 (build night 6)
 
-`Shireen_Baselines_Week3.ipynb` is the main notebook (open in Colab, Run all).
+histogram + WL on circuitree_v2, synthetic first then real.
 
-`baselines/` has the same code split into files so it can be imported:
+to run: open `Shireen_Baselines_v2.ipynb` in colab, set `ROOT` to wherever circuitree_v2 is unzipped, run all (~3 min)
 
-| file | what's in it |
-|---|---|
-| `aig_loader.py` | `make_aigs` (ABC strash), `load_aig` (AIG -> graph w/ inverted edges), `aig_stats` |
-| `histogram.py` | baseline 1 - histogram |
-| `wl_kernel.py` | baseline 2 - WL kernel (grakel) |
-| `structural.py` | baseline 3 - `[#nodes, #edges, depth, #PI, #PO]` |
-| `evaluate.py` | Hit@1 / P@k / MRR + `embedding_ranker` for the GNN |
-| `standin_variants.py` | temp ABC variants until the team ones are ready |
+- uses `graphs/<track>.npz` + `samples.csv`, no .bench parsing or pytorch graphs
+- scored the same way as `evaluate.py` (checked, same numbers)
+- WL rounds picked on val, test only run once at the end
+- `baselines_v2.py` is the same code if you want to import it
 
-```python
-from baselines import *
-make_aigs("bench_folder", "aig")
-circuits = load_folder("aig")
-evaluate(structural_rank, circuits)
-```
+## results on test (Hit@1 / mAP)
 
+| method | synthetic hard | synthetic full | real hard | real full |
+|---|---|---|---|---|
+| histogram | 0.42 / 0.36 | 0.23 / 0.11 | 0.61 / 0.60 | 0.37 / 0.16 |
+| WL (h=2) | 0.82 / 0.53 | 0.71 / 0.30 | 0.77 / 0.69 | 0.49 / 0.25 |
+| WL + input positions (h=1) | 0.86 / 0.57 | 0.77 / 0.35 | 0.80 / 0.74 | 0.68 / 0.43 |
+| dataset's wl_kernel (to compare) | 0.83 / 0.53 | 0.67 / 0.25 | 0.77 / 0.70 | 0.44 / 0.21 |
 
+## time
 
-Results so far (11 ISCAS'85 circuits + temp variants), top-1 match: histogram ~80%, WL ~93%, structural ~94%.
+| | per circuit | per search (1 query vs whole test set) |
+|---|---|---|
+| histogram | ~0.004 ms | ~2 ms |
+| WL | ~0.06 ms | ~2.5 ms |
+| CEC (ABC) | ~50-140 ms per pair (changes run to run) | ~8-20 min on real, ~1 min on synthetic |
+
+CEC got 200/200 pairs right so it's exact, just way too slow to search with. all the numbers are in `shireen_baseline_results.csv`
