@@ -1,0 +1,5 @@
+numpy
+networkx
+# optional, for the example model and to_pyg/load_pyg:
+torch
+torch_geometric
