@@ -91,6 +91,11 @@ def build_graph(p):
                   num_nodes=p['n_nodes'])
     g.edata['r'] = th.tensor(p['r'], dtype=th.long)
     g.ndata['inv'] = th.zeros(p['n_nodes'])      # PO inversion handled after the GNN
+    # input position: input i (the i-th INPUT line, e.g. x0, x1, ...) gets i+1; every other node gets 0.
+    # Only used by models that have a pos_emb table (Experiment B); ignored otherwise.
+    pos = th.zeros(p['n_nodes'], dtype=th.long)
+    pos[:p['n_pi']] = th.arange(1, p['n_pi'] + 1)
+    g.ndata['pos'] = pos
     return g
 
 
@@ -101,7 +106,13 @@ def embed_batch(model, graphs, po_lists, po_inv_lists, device):
     the same readout train_global.py uses."""
     import torch as th, dgl
     bg = dgl.batch(graphs).to(device)
-    bg.ndata['h'] = th.ones((bg.num_nodes(), model.hidden_dim), device=device)
+    h0 = th.ones((bg.num_nodes(), model.hidden_dim), device=device)
+    pos_emb = getattr(model, 'pos_emb', None)
+    if pos_emb is not None:                                   # Experiment B: each input gets its own start
+        p = bg.ndata['pos']
+        p = th.where(p < pos_emb.num_embeddings, p, th.zeros_like(p))
+        h0 = h0 + pos_emb(p)                                  # row 0 is always zero -> gates unchanged
+    bg.ndata['h'] = h0
     topo = [l.to(device) for l in dgl.topological_nodes_generator(bg)]
     use_proj = model.flag_proj
     model.set_flag_proj(False)                                # project only after PO inversion
